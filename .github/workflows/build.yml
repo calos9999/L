@@ -1,4 +1,4 @@
-name: Build LineageOS 18.1 OnePlus 3
+name: Build LineageOS OnePlus 3
 
 on:
   workflow_dispatch:
@@ -8,19 +8,7 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Free Disk Space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: 1024
-          temp-reserve-mb: 1024
-          swap-size-mb: 10240
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-          remove-docker-images: 'true'
-
-      - name: Setup Build Packages
+      - name: Install build packages
         run: |
           sudo apt update
           sudo apt install -y bc bison build-essential ccache curl flex g++-multilib \
@@ -29,40 +17,52 @@ jobs:
           libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc \
           xxd zip zlib1g-dev python-is-python3 openjdk-11-jdk libtinfo5
 
+      - name: Install repo and configure git
+        run: |
           mkdir -p ~/bin
           curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
 
-          git config --global user.name "ActionsBuilder"
-          git config --global user.email "actions@build.local"
+          git config --global user.email "builder@action.local"
+          git config --global user.name "Lineage Builder"
           git lfs install
+          git config --global trailer.changeid.key "Change-Id"
 
-      - name: Sync LineageOS 18.1 Source
+      - name: Initialize and sync LineageOS source
         run: |
           mkdir -p ~/android/lineage
           cd ~/android/lineage
-          repo init -u https://github.com/LineageOS/android.git -b lineage-18.1 --depth=1 --git-lfs --no-clone-bundle
-          repo sync -c --no-clone-bundle --no-tags --current-branch -j$(nproc)
+          repo init -u https://github.com/LineageOS/android.git -b lineage-18.1 --git-lfs --no-clone-bundle
+          repo sync -c -j$(nproc)
 
-      - name: Pull OnePlus 3 Trees
-        run: |
-          cd ~/android/lineage
-          git clone --depth=1 -b lineage-18.1 https://github.com/LineageOS/android_device_oneplus_oneplus3.git device/oneplus/oneplus3
-          git clone --depth=1 -b lineage-18.1 https://github.com/LineageOS/android_kernel_oneplus_msm8996.git kernel/oneplus/msm8996
-          git clone --depth=1 -b lineage-18.1 https://github.com/TheMuppets/proprietary_vendor_oneplus.git vendor/oneplus
-
-      - name: Compile ROM
+      - name: Prepare device-specific code (breakfast)
         run: |
           cd ~/android/lineage
           source build/envsetup.sh
           breakfast oneplus3
+
+      - name: Extract proprietary blobs
+        run: |
+          cd ~/android/lineage
+          # Alternativa all'estrazione via USB da telefono collegato:
+          git clone -b lineage-18.1 https://github.com/TheMuppets/proprietary_vendor_oneplus.git vendor/oneplus
+
+      - name: Start the build (brunch)
+        run: |
+          cd ~/android/lineage
+          source build/envsetup.sh
+          export USE_CCACHE=1
+          export CCACHE_EXEC=/usr/bin/ccache
+          ccache -M 50G
           brunch oneplus3
 
-      - name: Upload ROM Artifact
+      - name: Upload output zip and recovery
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: lineageos-18.1-oneplus3
-          path: /home/runner/work/**/out/target/product/oneplus3/lineage-*.zip
-          retention-days: 7
+          name: lineageos-oneplus3-artifacts
+          path: |
+            /home/runner/android/lineage/out/target/product/oneplus3/lineage-*.zip
+            /home/runner/android/lineage/out/target/product/oneplus3/recovery.img
+            
